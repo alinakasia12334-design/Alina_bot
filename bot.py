@@ -1,28 +1,30 @@
 import telebot
 import json
 import os
-from datetime import datetime
-import pytz
+from datetime import datetime, timedelta
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 # ========== НАСТРОЙКИ ==========
 TOKEN = "8721756439:AAFjZgd7EFllbqJorgGZCqM5mFPcYSfey_Y"
-ADMIN_ID = 463620997  # твой Telegram ID
+ADMIN_ID = 463620997
 
 bot = telebot.TeleBot(TOKEN)
 DATA_FILE = "finance.json"
-MOSCOW_TZ = pytz.timezone('Europe/Moscow')
+
+# Московское время (UTC+3)
+def get_moscow_time():
+    return datetime.utcnow() + timedelta(hours=3)
 
 # ========== ФУНКЦИИ РАБОТЫ С ДАННЫМИ ==========
-def get_moscow_time():
-    return datetime.now(MOSCOW_TZ)
-
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             if "allowed_users" not in data:
                 data["allowed_users"] = []
+            # Конвертируем старые рубли (если были float) в int
+            if isinstance(data.get("rub"), float):
+                data["rub"] = int(data["rub"])
             return data
     return {
         "usd": 20.0,
@@ -32,6 +34,8 @@ def load_data():
     }
 
 def save_data(data):
+    # Убеждаемся, что рубли — целые
+    data["rub"] = int(data["rub"])
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -318,7 +322,7 @@ def process_set_balance(message):
             data["usd"] = amount
             bot.reply_to(message, f"✅ Остаток в долларах установлен: {amount:.2f}$")
         elif currency == "₽":
-            data["rub"] = amount
+            data["rub"] = int(amount)
             bot.reply_to(message, f"✅ Остаток в рублях установлен: {int(amount)}₽")
         else:
             bot.reply_to(message, "❌ Укажи валюту: $ или ₽\nПример: `$ 1000`", parse_mode='Markdown')
@@ -351,22 +355,28 @@ def handle_operation_callback(call):
         currency = call.data.split("_")[1]
         if currency == "$":
             data["usd"] += amount
+            action = "ПРИХОД"
+            amount_display = f"{amount:.2f}{currency}"
         else:
-            data["rub"] += amount
-        action = "ПРИХОД"
+            data["rub"] += int(amount)
+            action = "ПРИХОД"
+            amount_display = f"{int(amount)}{currency}"
     else:
         currency = call.data.split("_")[1]
         if currency == "$":
             data["usd"] -= amount
+            action = "РАСХОД"
+            amount_display = f"{amount:.2f}{currency}"
         else:
-            data["rub"] -= amount
-        action = "РАСХОД"
+            data["rub"] -= int(amount)
+            action = "РАСХОД"
+            amount_display = f"{int(amount)}{currency}"
     
     now = get_moscow_time()
     transaction = {
         "date": now.strftime("%Y-%m-%d %H:%M:%S"),
         "type": action.lower(),
-        "amount": amount,
+        "amount": int(amount) if currency == "₽" else amount,
         "currency": currency,
         "comment": comment,
         "sign": '+' if action == "ПРИХОД" else '-'
@@ -374,7 +384,7 @@ def handle_operation_callback(call):
     data["transactions"].append(transaction)
     save_data(data)
     
-    bot.edit_message_text(f"✅ {action} {amount:.2f}{currency} {comment}\n🕐 {now.strftime('%H:%M')} МСК", 
+    bot.edit_message_text(f"✅ {action} {amount_display} {comment}\n🕐 {now.strftime('%H:%M')} МСК", 
                           call.message.chat.id, call.message.message_id)
     bot.send_message(call.message.chat.id, f"💰 Остаток: $ {data['usd']:.2f} | ₽ {int(data['rub'])}")
     
@@ -578,7 +588,7 @@ def send_period_report(chat_id, start_date_str, end_date_str):
         report += f"💰 *ТЕКУЩИЙ ОСТАТОК:*\n  $ {data_now['usd']:.2f}\n  ₽ {int(data_now['rub'])}"
         
         bot.send_message(chat_id, report, parse_mode='Markdown')
-    except:
+    except Exception as e:
         bot.send_message(chat_id, "❌ Ошибка при формировании отчёта. Проверьте даты.")
 
 # ========== ОБРАБОТКА КНОПОК ОТЧЁТОВ ==========
@@ -669,7 +679,13 @@ def undo_last(message):
             data["rub"] += last["amount"]
     
     save_data(data)
-    bot.reply_to(message, f"✅ Отменено: {last['sign']}{last['amount']:.2f if last['currency'] == '$' else int(last['amount'])}{last['currency']} {last['comment']}\n💰 Остаток: $ {data['usd']:.2f} | ₽ {int(data['rub'])}")
+    
+    if last["currency"] == "$":
+        amount_display = f"{last['amount']:.2f}"
+    else:
+        amount_display = f"{int(last['amount'])}"
+    
+    bot.reply_to(message, f"✅ Отменено: {last['sign']}{amount_display}{last['currency']} {last['comment']}\n💰 Остаток: $ {data['usd']:.2f} | ₽ {int(data['rub'])}")
 
 @bot.message_handler(commands=['history'])
 def history(message):
@@ -714,7 +730,8 @@ def day_command(message):
 # ========== ЗАПУСК ==========
 print("🚀 Бот Алины запущен!")
 print(f"👤 Админ: {ADMIN_ID}")
-print("🕐 Московское время")
+print("🕐 Московское время (UTC+3)")
 print("🔒 Приватный режим")
+print("💰 Рубли теперь считаются правильно (целые числа)")
 
 bot.infinity_polling()
