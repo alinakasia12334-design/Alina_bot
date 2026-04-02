@@ -458,8 +458,21 @@ def send_today_report(chat_id):
 
 def send_single_day_report(chat_id, date_input):
     try:
-        day, month = date_input.split('.')
-        year = datetime.now().year
+        # Поддерживаем форматы: 1.04, 01.04, 1.04.26, 01.04.2026
+        parts = date_input.split('.')
+        if len(parts) == 2:
+            day, month = parts
+            year = datetime.now().year
+        elif len(parts) == 3:
+            day, month, year = parts
+            if len(year) == 2:
+                year = 2000 + int(year)
+        else:
+            bot.send_message(chat_id, "❌ Неправильный формат. Используй: `1.04` или `01.04`", parse_mode='Markdown')
+            return
+        
+        day = day.zfill(2)
+        month = month.zfill(2)
         date_str = f"{year}-{month}-{day}"
         display_date = f"{day}.{month}.{year}"
         
@@ -485,7 +498,13 @@ def send_single_day_report(chat_id, date_input):
                         expense_rub += tx["amount"]
         
         if not day_tx:
-            bot.send_message(chat_id, f"📆 *ОТЧЕТ ЗА {display_date}*\n━━━━━━━━━━━━━━━━━━\n\nЗа этот день операций нет", parse_mode='Markdown')
+            # Отладка: покажем доступные даты
+            all_dates = sorted(set([tx["date"][:10] for tx in data["transactions"]]))
+            if all_dates:
+                dates_str = "\n".join(all_dates[-10:])
+                bot.send_message(chat_id, f"📆 *ОТЧЕТ ЗА {display_date}*\n━━━━━━━━━━━━━━━━━━\n\nЗа этот день операций нет.\n\nДоступные даты в базе (последние 10):\n{dates_str}", parse_mode='Markdown')
+            else:
+                bot.send_message(chat_id, f"📆 *ОТЧЕТ ЗА {display_date}*\n━━━━━━━━━━━━━━━━━━\n\nЗа этот день операций нет.\n\nВ базе пока нет ни одной операции.", parse_mode='Markdown')
             return
         
         report = f"📆 *ОТЧЕТ ЗА {display_date}*\n━━━━━━━━━━━━━━━━━━\n\n"
@@ -515,8 +534,8 @@ def send_single_day_report(chat_id, date_input):
             report += " —"
         
         bot.send_message(chat_id, report, parse_mode='Markdown')
-    except:
-        bot.send_message(chat_id, "❌ Неправильный формат даты. Используй: `27.03`", parse_mode='Markdown')
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ Ошибка: {e}\nПроверь формат даты, например: `1.04` или `01.04`", parse_mode='Markdown')
 
 def send_period_report(chat_id, start_date_str, end_date_str):
     try:
@@ -603,14 +622,14 @@ def handle_report_callback(call):
         send_today_report(call.message.chat.id)
         
     elif call.data == "report_single_day":
-        bot.edit_message_text("📆 *Введите дату в формате:* `27.03`\n\nНапример: `27.03`", 
+        bot.edit_message_text("📆 *Введите дату в формате:* `1.04` или `01.04`\n\nНапример: `1.04`", 
                               call.message.chat.id, call.message.message_id, parse_mode='Markdown')
         if not hasattr(bot, "waiting_for_day"):
             bot.waiting_for_day = {}
         bot.waiting_for_day[call.message.chat.id] = True
         
     elif call.data == "report_period":
-        bot.edit_message_text("🗓️ *Введите начальную дату:* `27.03`", 
+        bot.edit_message_text("🗓️ *Введите начальную дату:* `1.04`", 
                               call.message.chat.id, call.message.message_id, parse_mode='Markdown')
         if not hasattr(bot, "waiting_for_period"):
             bot.waiting_for_period = {}
@@ -651,7 +670,7 @@ def handle_period_input(message):
             del bot.waiting_for_period[message.chat.id]
             send_period_report(message.chat.id, start_date, end_date)
     except:
-        bot.reply_to(message, "❌ Неправильный формат. Используй: `27.03`", parse_mode='Markdown')
+        bot.reply_to(message, "❌ Неправильный формат. Используй: `1.04`", parse_mode='Markdown')
         if user_state["step"] == "start":
             del bot.waiting_for_period[message.chat.id]
 
@@ -725,13 +744,14 @@ def day_command(message):
         date_input = message.text.split()[1]
         send_single_day_report(message.chat.id, date_input)
     except:
-        bot.reply_to(message, "❌ Напиши: /day 27.03")
+        bot.reply_to(message, "❌ Напиши: /day 1.04", parse_mode='Markdown')
 
 # ========== ЗАПУСК ==========
 print("🚀 Бот Алины запущен!")
 print(f"👤 Админ: {ADMIN_ID}")
 print("🕐 Московское время (UTC+3)")
 print("🔒 Приватный режим")
-print("💰 Рубли теперь считаются правильно (целые числа)")
+print("💰 Рубли считаются правильно (целые числа)")
+print("📆 Отчёты за день поддерживают форматы: 1.04, 01.04, 1.04.26")
 
 bot.infinity_polling()
